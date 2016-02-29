@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include "../head/SocketClient.h"
+#include "../head/MD5.h"
 #include <semaphore.h>
 #include "string.h"
 #include "stdlib.h"
@@ -26,8 +27,11 @@ public:
 	int SendToServer(char * message, unsigned int length);
 private:
 	SocketClient socketClient;
+	MD5 md5;
 	static void messageCallback(char *message, unsigned int messLength);
 	static void statusCallback(clientStatus currentStatus);
+	int Login(void);
+
 	static char recvMessage[BUFFER_SIZE];
 	char EIP[20];
 	int EPort;
@@ -42,9 +46,55 @@ unsigned int IM::recvLength;
 sem_t IM::newRecvedMessage;
 pthread_mutex_t IM::serverMessage;
 
-int IM::StartIM() {
+int IM::Login(void) {
 	char mes[200];
+	char userName[] = "wu", password[] = "dd", *p;
+	int length, slength, res;
+	md5.update("nvcaodnkn");
+	const char * identifier = md5.toString().data();
 
+	length = 2 + strlen(userName) + 2 + strlen(password) + 2 + strlen(identifier);
+	slength = length + 2;
+	p = mes;
+	*p++ = 0x10;
+	while (length > 127) {
+		*p++ = (length % 128) || 0x80;
+		length /= 128;
+		slength++;
+	}
+	*p++ = (length % 128);
+	*p++ = strlen(userName) / 256;
+	*p++ = strlen(userName) % 256;
+	memcpy(p, userName, strlen(userName));
+	p += strlen(userName);
+	*p++ = strlen(password) / 256;
+	*p++ = strlen(password) % 256;
+	memcpy(p, password, strlen(password));
+	p += strlen(password);
+
+	*p++ = strlen(identifier) / 256;
+	*p++ = strlen(identifier) % 256;
+	memcpy(p, identifier, strlen(identifier));
+	p += strlen(identifier);
+
+	SendToServer(mes, slength);
+	sem_wait(&newRecvedMessage);
+	pthread_mutex_lock(&serverMessage);
+	for (int i = 0; i < recvLength; i++) {
+		printf("%02X ", recvMessage[i]);
+	}
+	if (recvMessage[3] == 0) {
+		printf("login succeed\n");
+		res = 0;
+	} else {
+		printf("wrong user name or password\n");
+		res = 1;
+	}
+
+	pthread_mutex_unlock(&serverMessage);
+}
+
+int IM::StartIM() {
 	sem_init(&newRecvedMessage, 0, 0);
 	serverMessage = PTHREAD_MUTEX_INITIALIZER;
 	memset(EIP, 0, 20);
@@ -55,61 +105,16 @@ int IM::StartIM() {
 	} else {
 		status = Idle;
 		cout << "connect to server: " << ServerIP << " Port:" << ServerPort << " failed!" << endl;
-		return res;
 	}
 
 	if (status == Connected) {
-		char *userName = "武", *password = "ff", *p;
-		int length, slength;
-		length = 2 + strlen(userName) + 2 + strlen(password);
-		slength = length + 2;
-		p = mes;
-		*p++ = 0x10;
-		while (length > 127) {
-			*p++ = (length % 128) || 0x80;
-			length /= 128;
-			slength++;
-		}
-		*p++ = (length % 128);
-		*p++ = strlen(userName) / 256;
-		*p++ = strlen(userName) % 256;
-		memcpy(p, userName, strlen(userName));
-		p += strlen(userName);
-		*p++ = strlen(password) / 256;
-		*p++ = strlen(password) % 256;
-		memcpy(p, password, strlen(password));
-		p += strlen(password);
+		if (Login()) {
+			res = -1;
+		} else {
+			//login succeed
 
-		SendToServer(mes, slength);
-		sem_wait(&newRecvedMessage);
-		pthread_mutex_lock(&serverMessage);
-		for (int i = 0; i < recvLength; i++) {
-			printf("%02X ", recvMessage[i]);
 		}
-//		char * start = strstr(recvMessage, ":");
-//		*start = 'P';
-//		start++;
-//		char * end = strstr(recvMessage, ",");
-//		memcpy(EIP, start, end - start);
-//		start = strstr(recvMessage, ":");
-//		start++;
-//		EPort = atoi(start);
-//		cout << "IP: " << EIP << " Port:" << EPort << endl;
-		pthread_mutex_unlock(&serverMessage);
-	} else {
-		return res;
 	}
-
-//	//connect to exchange server
-//	res = socketClient.StartClient(EIP, EPort, messageCallback, statusCallback);
-//	if (res == 0) {
-//		status = Connected;
-//		cout << "connected to server: " << EIP << " Port:" << EPort << endl;
-//	} else {
-//		status = Idle;
-//		cout << "connect to server: " << EIP << " Port:" << EPort << " failed!" << endl;
-//		return res;
-//	}
 
 	return res;
 }
