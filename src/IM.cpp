@@ -22,7 +22,7 @@ using namespace std;
 class IM {
 
 public:
-	int StartIM();
+	int StartIM(char *userName, char *password);
 	static clientStatus status;
 	int SendToServer(char * message, unsigned int length);
 private:
@@ -30,7 +30,7 @@ private:
 	MD5 md5;
 	static void messageCallback(char *message, unsigned int messLength);
 	static void statusCallback(clientStatus currentStatus);
-	int Login(void);
+	int Login(char *userName, char *password);
 
 	static char recvMessage[BUFFER_SIZE];
 	char EIP[20];
@@ -38,6 +38,9 @@ private:
 	static unsigned int recvLength;
 	static sem_t newRecvedMessage;
 	static pthread_mutex_t serverMessage;
+
+	static void * ReceiveThread(void * para);
+
 };
 
 clientStatus IM::status;
@@ -46,9 +49,9 @@ unsigned int IM::recvLength;
 sem_t IM::newRecvedMessage;
 pthread_mutex_t IM::serverMessage;
 
-int IM::Login(void) {
+int IM::Login(char *userName, char *password) {
 	char mes[200];
-	char userName[] = "wu", password[] = "dd", *p;
+	char *p;
 	int length, slength, res;
 	md5.update("nvcaodnkn");
 	const char * identifier = md5.toString().data();
@@ -80,9 +83,10 @@ int IM::Login(void) {
 	SendToServer(mes, slength);
 	sem_wait(&newRecvedMessage);
 	pthread_mutex_lock(&serverMessage);
-	for (int i = 0; i < recvLength; i++) {
-		printf("%02X ", recvMessage[i]);
+	for (unsigned int i = 0; i < recvLength; i++) {
+		printf("%02X ", (unsigned char) recvMessage[i]);
 	}
+	printf("\n");
 	if (recvMessage[3] == 0) {
 		printf("login succeed\n");
 		res = 0;
@@ -92,9 +96,11 @@ int IM::Login(void) {
 	}
 
 	pthread_mutex_unlock(&serverMessage);
+
+	return res;
 }
 
-int IM::StartIM() {
+int IM::StartIM(char *userName, char *password) {
 	sem_init(&newRecvedMessage, 0, 0);
 	serverMessage = PTHREAD_MUTEX_INITIALIZER;
 	memset(EIP, 0, 20);
@@ -108,15 +114,94 @@ int IM::StartIM() {
 	}
 
 	if (status == Connected) {
-		if (Login()) {
+		if (Login(userName, password)) {
 			res = -1;
 		} else {
 			//login succeed
+			pthread_t recvThreadID;
+			pthread_create(&recvThreadID, NULL, ReceiveThread, this);
+			/*
+			 * head
+			 * length
+			 * destination utf-8 encoded string
+			 * Emergency
+			 * data
+			 *
+			 */
 
+			while (1) {
+				char destination[60], Emergency, payload[60], mes[200], *p;
+				int tmp, slength;
+				p = mes;
+				slength = 0;
+
+				memset(destination, 0, sizeof(destination));
+				memset(payload, 0, sizeof(payload));
+
+				p[0] = 0x30;
+				p++;
+				slength++;
+				printf("Destination emergency Payload:\n");
+				scanf("%s %c %s", destination, &Emergency, payload);
+				printf("ipnut:\n%s\n", destination);
+				printf("%c\n", Emergency);
+				printf("%s\nend input\n", payload);
+
+				tmp = 2 + strlen(destination) + 1 + strlen(payload);
+
+				while (tmp > 127) {
+					*p = (tmp % 128) | 0x80;
+					slength++;
+					p++;
+				}
+				*p = (tmp % 128);
+				p++;
+				slength++;
+
+				slength += tmp;
+
+				p[0] = strlen(destination) / 256;
+				p[1] = strlen(destination) % 256;
+				p += 2;
+
+				memcpy(p, destination, strlen(destination));
+				p++;
+
+				p[0] = Emergency - 48;
+				p++;
+				memcpy(p, payload, strlen(payload));
+
+				for (int i = 0; i < slength; i++) {
+					printf("%02X ", (unsigned char) mes[i]);
+				}
+				printf("\n");
+
+				SendToServer(mes, slength);
+
+			}
 		}
 	}
 
 	return res;
+}
+
+void * IM::ReceiveThread(void * para) {
+	IM *im = (IM*)para;
+	while (1) {
+		sem_wait(&newRecvedMessage);
+		pthread_mutex_lock(&serverMessage);
+		printf("Recv: %s\n", recvMessage);
+		for (unsigned int i = 0; i < recvLength; i++) {
+			printf("%02X ", (unsigned char) recvMessage[i]);
+		}
+		printf("\n");
+		if (recvMessage[0] == (char)0xC0) {
+			char pingrep[] = { (char)0xD0, 0x00 };
+			im->SendToServer(pingrep, 2);
+		}
+		pthread_mutex_unlock(&serverMessage);
+	}
+	return 0;
 }
 
 void IM::messageCallback(char *message, unsigned int messLength) {
@@ -146,9 +231,18 @@ int IM::SendToServer(char * message, unsigned int length) {
 	return res;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
 	IM im;
-	im.StartIM();
+	char *userName, *password;
+
+	if (argc != 3) {
+		cout << "Please input username and password. example: ./IM wu bbb" << endl;
+		return -1;
+	}
+	userName = argv[1];
+	password = argv[2];
+
+	im.StartIM(userName, password);
 	cout << "Connect Error\n" << endl;
 
 	return 0;
