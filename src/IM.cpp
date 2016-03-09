@@ -16,8 +16,8 @@
 
 using namespace std;
 
-#define ServerIP "127.0.0.1"
-#define ServerPort 6500
+#define ServerIP "192.168.3.37"
+#define ServerPort 6000
 
 class IM {
 
@@ -51,17 +51,17 @@ pthread_mutex_t IM::serverMessage;
 
 int IM::Login(char *userName, char *password) {
 	char mes[200];
-	char *p;
-	int length, slength, res;
+	char *p, Aserver[30], EServer[30];
+	int length, slength, res = 0, i;
 	md5.update("nvcaodnkn");
 	const char * identifier = md5.toString().data();
 
-	length = 2 + strlen(userName) + 2 + strlen(password) + 2 + strlen(identifier);
+	length = 2 + strlen(userName) + 2 + strlen(password) + 2 + strlen(identifier) + 2 + 1;
 	slength = length + 2;
 	p = mes;
 	*p++ = 0x10;
 	while (length > 127) {
-		*p++ = (length % 128) || 0x80;
+		*p++ = (length % 127) || 0x80;
 		length /= 128;
 		slength++;
 	}
@@ -80,6 +80,10 @@ int IM::Login(char *userName, char *password) {
 	memcpy(p, identifier, strlen(identifier));
 	p += strlen(identifier);
 
+	*p++ = 0;
+	*p++ = 1;
+	*p++ = 3;
+
 	SendToServer(mes, slength);
 	sem_wait(&newRecvedMessage);
 	pthread_mutex_lock(&serverMessage);
@@ -87,12 +91,46 @@ int IM::Login(char *userName, char *password) {
 		printf("%02X ", (unsigned char) recvMessage[i]);
 	}
 	printf("\n");
-	if (recvMessage[3] == 0) {
-		printf("login succeed\n");
-		res = 0;
-	} else {
-		printf("wrong user name or password\n");
+
+	memset(Aserver, 0, sizeof(Aserver));
+	memset(EServer, 0, sizeof(EServer));
+	length = 0;
+	i = 0;
+
+	if (recvMessage[i++] != 0x20) {
+		printf("wrong format!\n");
 		res = 1;
+	} else {
+		slength = 1;
+		while (recvMessage[i] > 127) {
+			length += slength * (recvMessage[i++] & 0x7F);
+			slength *= 128;
+		}
+		length += slength * recvMessage[i++];
+
+		slength = recvMessage[i++];
+		length -= 1 + slength;
+		if ((length < 0) && slength) {
+			res = 1;
+		} else {
+			memcpy(Aserver, recvMessage + i, slength);
+			i += slength;
+
+			slength = recvMessage[i++];
+			length -= 1 + slength;
+			if ((length < 0) && slength) {
+				res = 1;
+			} else {
+				memcpy(EServer, recvMessage + i, slength);
+				i += slength;
+			}
+
+		}
+	}
+	if (res == 0) {
+		printf("AServer:%s EServer:%s\n", Aserver, EServer);
+	} else {
+		printf("error~~~\n");
 	}
 
 	pthread_mutex_unlock(&serverMessage);
@@ -186,7 +224,7 @@ int IM::StartIM(char *userName, char *password) {
 }
 
 void * IM::ReceiveThread(void * para) {
-	IM *im = (IM*)para;
+	IM *im = (IM*) para;
 	while (1) {
 		sem_wait(&newRecvedMessage);
 		pthread_mutex_lock(&serverMessage);
@@ -195,8 +233,8 @@ void * IM::ReceiveThread(void * para) {
 			printf("%02X ", (unsigned char) recvMessage[i]);
 		}
 		printf("\n");
-		if (recvMessage[0] == (char)0xC0) {
-			char pingrep[] = { (char)0xD0, 0x00 };
+		if (recvMessage[0] == (char) 0xC0) {
+			char pingrep[] = { (char) 0xD0, 0x00 };
 			im->SendToServer(pingrep, 2);
 		}
 		pthread_mutex_unlock(&serverMessage);
